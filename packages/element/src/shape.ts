@@ -1060,15 +1060,17 @@ export const getFreedrawOutlinePoints = (
     ? element.points.map(([x, y], i) => [x, y, element.pressures[i]])
     : [[0, 0, 0.5]];
 
-  return getStroke(inputPoints as number[][], {
-    simulatePressure: element.simulatePressure,
-    size: element.strokeWidth * 4.25,
-    thinning: 0.6,
-    smoothing: 0.5,
-    streamline: 0.5,
-    easing: (t) => Math.sin((t * Math.PI) / 2), // https://easings.net/#easeOutSine
+  const options = {
+    simulatePressure: element.simulatePressure,       // keep user toggle
+    size: element.strokeWidth * 2.5,                  // was 4.25 (big cause of chunkiness)
+    thinning: element.simulatePressure ? 0.25 : 0,    // was 0.6 (very brushy)
+    smoothing: 0.25,                                  // was 0.5
+    streamline: 0.35,                                 // was 0.5
+    easing: (t: number) => t,                         // linear “ink”
     last: true,
-  }) as [number, number][];
+  } satisfies Parameters<typeof getStroke>[1];
+
+return getStroke(inputPoints as number[][], options) as [number, number][];
 };
 
 const med = (A: number[], B: number[]) => {
