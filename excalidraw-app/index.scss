@@ -1,5 +1,17 @@
 @import "../packages/excalidraw/css/variables.module.scss";
 
+/* Ensure the React root and app can occupy the full viewport height.
+   Without this, #root can collapse to height: 0 (blank white page). */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+#root {
+  min-height: 100vh;
+}
+
 .excalidraw {
   --color-primary-contrast-offset: #625ee0; // to offset Chubb illusion
 

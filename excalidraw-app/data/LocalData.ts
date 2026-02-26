@@ -49,6 +49,23 @@ const filesStore = createStore("files-db", "files-store");
 
 export const localStorageQuotaExceededAtom = atom(false);
 
+// ------------------------------
+// Scoping helpers
+// ------------------------------
+const getScope = (): string => {
+  try {
+    return new URLSearchParams(window.location.search).get("scope") || "default";
+  } catch {
+    return "default";
+  }
+};
+
+// Prefix keys by scope to prevent collisions between different embeds/slides.
+const scopeKey = (key: string, scope?: string | null) => {
+  const s = (scope || "").trim();
+  return s ? `${s}::${key}` : key;
+};
+
 class LocalFileManager extends FileManager {
   clearObsoleteFiles = async (opts: { currentFileIds: FileId[] }) => {
     await entries(filesStore).then((entries) => {
@@ -73,6 +90,8 @@ const saveDataStateToLocalStorage = (
   elements: readonly ExcalidrawElement[],
   appState: AppState,
 ) => {
+  const scope = getScope();
+
   const localStorageQuotaExceeded = appJotaiStore.get(
     localStorageQuotaExceededAtom,
   );
@@ -87,13 +106,15 @@ const saveDataStateToLocalStorage = (
     }
 
     localStorage.setItem(
-      STORAGE_KEYS.LOCAL_STORAGE_ELEMENTS,
+      scopeKey(STORAGE_KEYS.LOCAL_STORAGE_ELEMENTS, scope),
       JSON.stringify(getNonDeletedElements(elements)),
     );
     localStorage.setItem(
-      STORAGE_KEYS.LOCAL_STORAGE_APP_STATE,
+      scopeKey(STORAGE_KEYS.LOCAL_STORAGE_APP_STATE, scope),
       JSON.stringify(_appState),
     );
+
+    // IMPORTANT: scope the version key too, otherwise tab-sync merges scopes.
     updateBrowserStateVersion(STORAGE_KEYS.VERSION_DATA_STATE);
     if (localStorageQuotaExceeded) {
       appJotaiStore.set(localStorageQuotaExceededAtom, false);
@@ -200,13 +221,13 @@ export class LocalData {
       );
     },
     async saveFiles({ addedFiles }) {
+      const scope = getScope();
+
       const savedFiles = new Map<FileId, BinaryFileData>();
       const erroredFiles = new Map<FileId, BinaryFileData>();
 
-      // before we use `storage` event synchronization, let's update the flag
-      // optimistically. Hopefully nothing fails, and an IDB read executed
-      // before an IDB write finishes will read the latest value.
-      updateBrowserStateVersion(STORAGE_KEYS.VERSION_FILES);
+      // Scope the version key, otherwise different scopes will trigger each other.
+      updateBrowserStateVersion(STORAGE_KEYS.VERSION_DATA_STATE);
 
       await Promise.all(
         [...addedFiles].map(async ([id, fileData]) => {
@@ -224,6 +245,7 @@ export class LocalData {
     },
   });
 }
+
 export class LibraryIndexedDBAdapter {
   /** IndexedDB database and store name */
   private static idb_name = STORAGE_KEYS.IDB_LIBRARY;
@@ -261,8 +283,7 @@ export class LibraryLocalStorageMigrationAdapter {
       STORAGE_KEYS.__LEGACY_LOCAL_STORAGE_LIBRARY,
     );
     if (LSData != null) {
-      const libraryItems: ImportedDataState["libraryItems"] =
-        JSON.parse(LSData);
+      const libraryItems: ImportedDataState["libraryItems"] = JSON.parse(LSData);
       if (libraryItems) {
         return { libraryItems };
       }

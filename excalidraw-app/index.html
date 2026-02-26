@@ -56,8 +56,7 @@
 
     <link rel="canonical" href="https://excalidraw.com" />
 
-    <!------------------------------------------------------------------------->
-    <!--   to minimize white flash on load when user has dark mode enabled   -->
+    <!-- Dark mode preload -->
     <script>
       try {
         function setTheme(theme) {
@@ -85,168 +84,136 @@
         console.error("Error setting dark mode", e);
       }
     </script>
+
     <style>
       html.dark {
         background-color: #121212;
         color: #fff;
       }
-    </style>
+</style>
 
-    <!-- Warmup the connection for Google fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-
-    <!------------------------------------------------------------------------->
-    <% if (typeof PROD != 'undefined' && PROD == true) { %>
-    <script>
-      // Redirect Excalidraw+ users which have auto-redirect enabled.
-      //
-      // Redirect only the bare root path, so link/room/library urls are not
-      // redirected.
-      //
-      // Putting into index.html for best performance (can't redirect on server
-      // due to location.hash checks).
-      if (
-        window.location.pathname === "/" &&
-        !window.location.hash &&
-        !window.location.search &&
-        // if its present redirect
-        document.cookie.includes("excplus-autoredirect=true")
-      ) {
-        window.location.href = "https://app.excalidraw.com";
-      }
-    </script>
-
-    <!-- Following placeholder is replaced during the build step -->
-    <!-- PLACEHOLDER:EXCALIDRAW_APP_FONTS -->
-
-    <!-- Register Assistant as the UI font, before the scene inits -->
-    <link
-      rel="stylesheet"
-      href="../packages/excalidraw/fonts/fonts.css"
-      type="text/css"
-    />
-
-    <% } else { %>
-    <script>
-      window.EXCALIDRAW_ASSET_PATH = window.origin;
-    </script>
-    <% } %>
-
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
-    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
-
-    <!-- Excalidraw version -->
-    <meta name="version" content="{version}" />
-
-    <% if (typeof VITE_APP_DEV_DISABLE_LIVE_RELOAD != 'undefined' &&
-    VITE_APP_DEV_DISABLE_LIVE_RELOAD == true) { %>
-    <script>
-      {
-        const _WebSocket = window.WebSocket;
-        window.WebSocket = function (url) {
-          if (/ws:\/\/localhost:.+?\/sockjs-node/.test(url)) {
-            console.info(
-              "[!!!] Live reload is disabled via VITE_APP_DEV_DISABLE_LIVE_RELOAD [!!!]",
-            );
-          } else {
-            return new _WebSocket(url);
-          }
-        };
-      }
-    </script>
-    <% } %>
-    <script>
-      // setting this so that libraries installation reuses this window tab.
-      window.name = "_excalidraw";
-    </script>
-
-    <!-- FIXME: remove this when we update CRA (fix SW caching) -->
-    <style>
-      body,
-      html {
-        margin: 0;
-        -webkit-text-size-adjust: 100%;
-
-        width: 100%;
-        height: 100%;
-        overflow: hidden;
-      }
-
-      .visually-hidden {
-        position: absolute !important;
-        height: 1px;
-        width: 1px;
-        overflow: hidden;
-        clip: rect(1px, 1px, 1px, 1px);
-        white-space: nowrap;
-        user-select: none;
-      }
-
-      #root {
-        height: 100%;
-        -webkit-touch-callout: none;
-        -webkit-user-select: none;
-        -khtml-user-select: none;
-        -moz-user-select: none;
-        -ms-user-select: none;
-        user-select: none;
-      }
-
-      @media screen and (min-width: 1200px) {
-        #root {
-          -webkit-touch-callout: default;
-          -webkit-user-select: auto;
-          -khtml-user-select: auto;
-          -moz-user-select: auto;
-          -ms-user-select: auto;
-          user-select: auto;
-        }
-      }
-    </style>
   </head>
 
   <body>
-    <noscript> You need to enable JavaScript to run this app. </noscript>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
     <header>
       <h1 class="visually-hidden">Excalidraw</h1>
     </header>
+
     <div id="root"></div>
-    <script type="module" src="index.tsx"></script>
-    <% if (typeof PROD != 'undefined' && PROD == true) { %>
-    <!-- 100% privacy friendly analytics -->
+
+    <!-- =========================================================
+         PATCH: scope-based persistence isolation
+         Use: ?scope=lec01-s03  and optional &fresh=1
+         ========================================================= -->
     <script>
-      // need to load this script dynamically bcs. of iframe embed tracking
-      var scriptEle = document.createElement("script");
-      scriptEle.setAttribute(
-        "src",
-        "https://scripts.simpleanalyticscdn.com/latest.js",
-      );
-      scriptEle.setAttribute("type", "text/javascript");
-      scriptEle.setAttribute("defer", true);
-      scriptEle.setAttribute("async", true);
-      // if iframe
-      if (window.self !== window.top) {
-        scriptEle.setAttribute("data-auto-collect", true);
-      }
+      (function () {
+        const params = new URLSearchParams(location.search);
+        const scope = params.get("scope");
+        const wantFresh = params.has("fresh");
+        if (!scope && !wantFresh) return;
 
-      document.body.appendChild(scriptEle);
+        const prefix = scope ? `scope:${scope}::` : "";
 
-      // if iframe
-      if (window.self !== window.top) {
-        scriptEle.addEventListener("load", () => {
-          if (window.sa_pageview) {
-            window.window.sa_event(action, {
-              category: "iframe",
-              label: "embed",
-              value: window.location.pathname,
+        const isExcalidrawLocalStorageKey = (key) => {
+          if (!key) return false;
+          return String(key).toLowerCase().startsWith("excalidraw");
+        };
+
+        const isExcalidrawDbName = (name) => {
+          if (!name) return false;
+          return String(name).startsWith("excalidraw-");
+        };
+
+        // ---- localStorage scoping ----
+        try {
+          const storage = window.localStorage;
+          const origGetItem = storage.getItem.bind(storage);
+          const origSetItem = storage.setItem.bind(storage);
+          const origRemoveItem = storage.removeItem.bind(storage);
+          const origKey = storage.key.bind(storage);
+
+          const scopedKey = (k) => (prefix ? prefix + k : k);
+
+          storage.getItem = (key) => {
+            if (prefix && isExcalidrawLocalStorageKey(key))
+              return origGetItem(scopedKey(key));
+            return origGetItem(key);
+          };
+
+          storage.setItem = (key, value) => {
+            if (prefix && isExcalidrawLocalStorageKey(key))
+              return origSetItem(scopedKey(key), value);
+            return origSetItem(key, value);
+          };
+
+          storage.removeItem = (key) => {
+            if (prefix && isExcalidrawLocalStorageKey(key))
+              return origRemoveItem(scopedKey(key));
+            return origRemoveItem(key);
+          };
+
+          if (wantFresh) {
+            const toDelete = [];
+            for (let i = 0; i < storage.length; i++) {
+              const k = origKey(i);
+              if (!k) continue;
+
+              if (prefix) {
+                if (k.startsWith(prefix)) {
+                  const unscoped = k.slice(prefix.length);
+                  if (isExcalidrawLocalStorageKey(unscoped)) toDelete.push(k);
+                }
+              } else {
+                if (isExcalidrawLocalStorageKey(k)) toDelete.push(k);
+              }
+            }
+            toDelete.forEach((k) => origRemoveItem(k));
+          }
+        } catch (e) {}
+
+        // ---- IndexedDB scoping ----
+        try {
+          const idb = window.indexedDB;
+          if (!idb || !prefix) return;
+
+          const origOpen = idb.open.bind(idb);
+          const origDeleteDatabase = idb.deleteDatabase.bind(idb);
+
+          const scopedDbName = (name) =>
+            isExcalidrawDbName(name) ? prefix + name : name;
+
+          idb.open = function (name, version) {
+            return origOpen(scopedDbName(name), version);
+          };
+
+          idb.deleteDatabase = function (name) {
+            return origDeleteDatabase(scopedDbName(name));
+          };
+
+          if (wantFresh && typeof idb.databases === "function") {
+            idb.databases().then((dbs) => {
+              (dbs || []).forEach((db) => {
+                const name = db && db.name;
+                if (!name) return;
+
+                if (name.startsWith(prefix)) {
+                  const unscoped = name.slice(prefix.length);
+                  if (isExcalidrawDbName(unscoped)) {
+                    try {
+                      origDeleteDatabase(name);
+                    } catch (e) {}
+                  }
+                }
+              });
             });
           }
-        });
-      }
+        } catch (e) {}
+      })();
     </script>
-    <!-- end LEGACY GOOGLE ANALYTICS -->
-    <% } %>
+
+    <script type="module" src="index.tsx"></script>
   </body>
 </html>
