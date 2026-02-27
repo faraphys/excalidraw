@@ -140,3 +140,8 @@ body,
     }
   }
 }
+
+/* Toggle: hide the big left tool-options/palette panel */
+.excalidraw-app.tool-options-collapsed .Island.App-menu__left {
+  display: none !important;
+}

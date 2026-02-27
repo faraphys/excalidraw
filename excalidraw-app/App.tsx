@@ -76,7 +76,6 @@ import Collab, {
 } from "./collab/Collab";
 import { AppFooter } from "./components/AppFooter";
 import { AppMainMenu } from "./components/AppMainMenu";
-import { AppWelcomeScreen } from "./components/AppWelcomeScreen";
 import {
   ExportToExcalidrawPlus,
   exportToExcalidrawPlus,
@@ -159,6 +158,18 @@ const getScopeKey = () => {
 
 const TRANSPARENT_BG = "rgba(0,0,0,0)";
 
+/**
+ * IMPORTANT NOTE ABOUT STROKE WIDTHS
+ * You changed packages/excalidraw/constants.ts to:
+ *   thin: 0.6
+ *   bold: 1.0
+ *   extraBold: 2.0
+ *
+ * Therefore the default for the "middle" option ("bold") should be: 1
+ * (We intentionally do NOT import STROKE_WIDTH here because it's not exported.)
+ */
+const DEFAULT_BOLD_STROKE_WIDTH = 1;
+
 // IMPORTANT: Build a *full* AppState base.
 // - If API exists: use excalidrawAPI.getAppState() (contains width/height/offsets).
 // - Else: synthesize a safe base with required fields.
@@ -175,6 +186,41 @@ const getBaseAppState = (api: ExcalidrawImperativeAPI | null): AppState => {
   };
 };
 
+// Force our desired defaults even if something restores other values.
+const enforceAppStateInvariants = (s: Partial<AppState> | null | undefined) => {
+  const appState: any = { ...(s as any) };
+
+  // Always transparent background + no loader dialogs
+  appState.viewBackgroundColor = TRANSPARENT_BG;
+  appState.isLoading = false;
+  appState.openDialog = null;
+
+  // Hide welcome screen (field differs across versions -> keep as any)
+  appState.isWelcomeScreenVisible = false as any;
+
+  // Always default stroke width to "bold" (middle) for all tools
+  appState.currentItemStrokeWidth = DEFAULT_BOLD_STROKE_WIDTH;
+
+  // Avoid penMode-driven compact toolbar quirks
+  appState.penMode = false;
+
+  // Start in selection tool by default
+  appState.activeTool = {
+    type: "selection",
+    customType: null,
+    locked: false,
+    lastActiveTool: null,
+    fromSelection: false,
+  } as any;
+
+  // Keep sensible drawing defaults
+  appState.currentItemRoughness = 0;
+  appState.currentItemEndArrowhead = "triangle" as any;
+  appState.currentItemStartArrowhead = null as any;
+
+  return appState as AppState;
+};
+
 // --------------------
 // Defaults you want at startup (and after restore)
 // --------------------
@@ -183,37 +229,34 @@ const DEFAULT_APPSTATE_OVERRIDES: Partial<AppState> = {
   openDialog: null,
   viewBackgroundColor: TRANSPARENT_BG,
 
-  // “small palette” behavior is often tied to penMode
-  penMode: true,
+  penMode: false,
 
-  // Start-Tool: Pen/Freedraw + tool lock ON
   activeTool: {
-    type: "freedraw",
+    type: "selection",
     customType: null,
-    locked: true,
+    locked: false,
     lastActiveTool: null,
     fromSelection: false,
   } as any,
 
-  // Defaults:
-  // - roughness: Architect (0)
-  // - strokeWidth: thin (1)
-  // - arrowheads: filled triangle on end
   currentItemRoughness: 0,
-  currentItemStrokeWidth: 1,
+
+  // IMPORTANT: "bold" (middle) after your constants.ts change
+  currentItemStrokeWidth: DEFAULT_BOLD_STROKE_WIDTH,
+
   currentItemEndArrowhead: "triangle" as any,
   currentItemStartArrowhead: null as any,
+
 };
 
 // Apply defaults WITHOUT wiping stored elements.
-// We do this once when API becomes available, and also after restore-syncs.
 const applyStartupDefaults = (api: ExcalidrawImperativeAPI) => {
   const base = getBaseAppState(api);
   api.updateScene({
-    appState: {
+    appState: enforceAppStateInvariants({
       ...base,
       ...DEFAULT_APPSTATE_OVERRIDES,
-    } as AppState,
+    }) as AppState,
     captureUpdate: CaptureUpdateAction.NEVER,
   });
 };
@@ -244,13 +287,10 @@ const initializeScene = async (opts: {
   return {
     scene: {
       elements: restoredElements,
-      appState: {
+      appState: enforceAppStateInvariants({
         ...restoredFromStorage,
-        // make sure loader/dialog don’t appear even before we apply defaults
-        isLoading: false,
-        openDialog: null,
-        viewBackgroundColor: TRANSPARENT_BG,
-      } as any,
+        ...DEFAULT_APPSTATE_OVERRIDES,
+      }) as any,
     },
     isExternalScene: false,
   };
@@ -273,11 +313,38 @@ const ExcalidrawWrapper = () => {
 
   const debugCanvasRef = useRef<HTMLCanvasElement>(null);
   const [debugAppState, setDebugAppState] = useState<AppState | null>(null);
+  const [toolOptionsCollapsed, setToolOptionsCollapsed] = useState(false);
 
   const [excalidrawAPI, excalidrawRefCallback] =
     useCallbackRefState<ExcalidrawImperativeAPI>();
 
   const forcingTransparentBgRef = useRef(false);
+
+  // Clicking the currently-active tool toggles the big options palette
+  useEffect(() => {
+    if (!excalidrawAPI) return;
+
+    const onDocClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+
+      const btn = target.closest<HTMLElement>('[data-testid^="toolbar-"]');
+      if (!btn) return;
+
+      const testId = btn.getAttribute("data-testid") || "";
+      const clickedTool = testId.slice("toolbar-".length);
+      const activeTool = excalidrawAPI.getAppState().activeTool?.type;
+
+      if (clickedTool && activeTool && clickedTool === activeTool) {
+        setToolOptionsCollapsed((v) => !v);
+      } else {
+        setToolOptionsCollapsed(false);
+      }
+    };
+
+    document.addEventListener("click", onDocClick, true);
+    return () => document.removeEventListener("click", onDocClick, true);
+  }, [excalidrawAPI]);
 
   // Keep bg transparent + no loader even if something restores a color.
   useEffect(() => {
@@ -288,7 +355,10 @@ const ExcalidrawWrapper = () => {
 
     forcingTransparentBgRef.current = true;
     excalidrawAPI.updateScene({
-      appState: { viewBackgroundColor: TRANSPARENT_BG, isLoading: false } as any,
+      appState: enforceAppStateInvariants({
+        viewBackgroundColor: TRANSPARENT_BG,
+        isLoading: false,
+      }) as any,
       captureUpdate: CaptureUpdateAction.NEVER,
     });
     queueMicrotask(() => {
@@ -385,7 +455,11 @@ const ExcalidrawWrapper = () => {
     ) {
       forcingTransparentBgRef.current = true;
       excalidrawAPI.updateScene({
-        appState: { viewBackgroundColor: TRANSPARENT_BG, isLoading: false } as any,
+        appState: {
+          viewBackgroundColor: TRANSPARENT_BG,
+          isLoading: false,
+          isWelcomeScreenVisible: false as any,
+        } as any,
         captureUpdate: CaptureUpdateAction.NEVER,
       });
     }
@@ -479,22 +553,21 @@ const ExcalidrawWrapper = () => {
       if (data.scene) {
         initialStatePromiseRef.current.promise.resolve({
           ...data.scene,
-          appState: {
+          appState: enforceAppStateInvariants({
             ...base,
             ...(data.scene.appState as any),
-            ...DEFAULT_APPSTATE_OVERRIDES, // IMPORTANT: defaults LAST (override storage)
-          } as AppState,
+            ...DEFAULT_APPSTATE_OVERRIDES, // overrides LAST => wins
+          }) as AppState,
         });
 
-        // Also enforce on live state (in case Excalidraw internally normalizes)
         applyStartupDefaults(excalidrawAPI);
       } else {
         initialStatePromiseRef.current.promise.resolve({
           elements: [],
-          appState: {
+          appState: enforceAppStateInvariants({
             ...base,
             ...DEFAULT_APPSTATE_OVERRIDES,
-          } as AppState,
+          }) as AppState,
         });
         applyStartupDefaults(excalidrawAPI);
       }
@@ -523,20 +596,20 @@ const ExcalidrawWrapper = () => {
           elements: restoreElements(data.scene.elements, null, {
             repairBindings: true,
           }),
-          appState: {
+          appState: enforceAppStateInvariants({
             ...base,
             ...restoreAppState((data.scene.appState as any) ?? null, base),
             ...DEFAULT_APPSTATE_OVERRIDES,
-          } as AppState,
+          }) as AppState,
           captureUpdate: CaptureUpdateAction.IMMEDIATELY,
         });
       } else {
         excalidrawAPI.updateScene({
           elements: [],
-          appState: {
+          appState: enforceAppStateInvariants({
             ...base,
             ...DEFAULT_APPSTATE_OVERRIDES,
-          } as AppState,
+          }) as AppState,
           captureUpdate: CaptureUpdateAction.IMMEDIATELY,
         });
       }
@@ -562,11 +635,11 @@ const ExcalidrawWrapper = () => {
             elements: restoreElements(localDataState?.elements, null, {
               repairBindings: true,
             }),
-            appState: {
+            appState: enforceAppStateInvariants({
               ...base,
               ...restoreAppState(localDataState?.appState, base),
               ...DEFAULT_APPSTATE_OVERRIDES,
-            } as AppState,
+            }) as AppState,
             captureUpdate: CaptureUpdateAction.NEVER,
           });
 
@@ -649,12 +722,21 @@ const ExcalidrawWrapper = () => {
 
   return (
     <div
-      style={{ height: "95vh", overflow: "hidden" }}
+      style={{ height: "100%", overflow: "hidden" }}
       className={clsx("excalidraw-app", {
         "is-collaborating": isCollaborating,
         "is-offline": isOffline,
+        "tool-options-collapsed": toolOptionsCollapsed,
       })}
     >
+      {/* Force the large palette container to stay visible (unless collapsed),
+          even if responsive/mobile CSS tries to hide it. */}
+      <style>{`
+        .excalidraw-app:not(.tool-options-collapsed) .Island.App-menu__left {
+          display: block !important;
+        }
+      `}</style>
+
       <Excalidraw
         excalidrawAPI={excalidrawRefCallback}
         onChange={onChange}
@@ -738,10 +820,7 @@ const ExcalidrawWrapper = () => {
           refresh={() => excalidrawAPI?.refresh()}
         />
 
-        <AppWelcomeScreen
-          onCollabDialogOpen={onCollabDialogOpen}
-          isCollabEnabled={!isCollabDisabled}
-        />
+        {/* AppWelcomeScreen removed to always start with blank canvas UI */}
 
         {localStorageQuotaExceeded && (
           <ErrorDialog onClose={() => {}}>
